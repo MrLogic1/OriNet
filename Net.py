@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torchvision import models
-class QueryEncoder(nn.Module):
+class ImgEncoder(nn.Module):
     def __init__(self, out_dim=128):
         super().__init__()
         self.dim = out_dim
@@ -61,7 +61,7 @@ class ImgNet(nn.Module):
         out_dim = 128
 
         super().__init__()
-        self.query_encoder = QueryEncoder(out_dim)
+        self.query_encoder = ImgEncoder(out_dim)
         self.clf = ImgClsNet()
         self.ori = ImgOriNet()
     def forward(self, input):
@@ -70,7 +70,7 @@ class ImgNet(nn.Module):
         o2, o3 = self.clf(out)
 
         return o1,o2,o3
-class RenderEncoder(nn.Module):
+class ModelEncoder(nn.Module):
     def __init__(self, out_dim=128):
         super().__init__()
         self.dim = out_dim
@@ -123,10 +123,41 @@ class ModelOriNet(nn.Module):
     def forward(self, input):
         out = self.sequential(input)
         return out
+class CrossDomNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.img_net = ImgNet()
+        self.model_net = ModelNet()
+    def forward(self, img, render):
+        img = self.img_net(img)
+        render = self.model_net(render)
+
+        render_emb = self.get_embedding(img, render)
+
+        return img, render_emb
+    def get_embedding(self, img, render):
+        #img: bs x dim
+        #render: bs x 12 x dim
+        bs, dim = img.size()
+        img = img.reshape(bs, 1, dim)
+
+        render2 = render.transpose(1,2)
+
+        simil = torch.bmm(img, render2)
+        simil = torch.squeeze(simil)
+
+        weight = torch.softmax(simil, 1)
+        weight = weight.reshape(bs, 1, dim)
+
+        emb = torch.bmm(weight, render)
+
+        return emb
+
+
 class ModelNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.render_encoder = RenderEncoder()
+        self.render_encoder = ModelEncoder()
         self.clf_net = ModelClfNet()
         self.ori_net = ModelOriNet()
     def forward(self, input):
@@ -147,22 +178,23 @@ if __name__ == '__main__':
 
     loss = nn.MSELoss()
 
-    opt1 = torch.optim.Adam(net1.parameters())
+    opt1 = torch.optim.Adam(net1.parameters(),lr= 0.001)
     opt2 = torch.optim.Adam(net2.parameters())
 
-    for i in range (100):
-        o11, o12, o13 = net1(x1[i])
-        o21, o22, o23 = net2(x2[i])
-        l1 = loss(o13, y1[i])
-        l2 = loss(o23, y2[i])
+    for e in range(400):
+        for i in range (100):
+            o11, o12, o13 = net1(x1[i])
+            o21, o22, o23 = net2(x2[i])
+            l1 = loss(o13, y1[i])
+            l2 = loss(o23, y2[i])
 
-        l3 = loss(o12,o22)
-        l4 = loss(o11,o21)
+            l3 = loss(o12,o22)
+            l4 = loss(o11,o21)
 
-        l = l1 + l2 + l3 + l4
-        l.backward()
+            l = l1 + l2 + l3 + l4
+            l.backward()
 
-        opt1.step()
-        opt2.step()
+            opt1.step()
+            opt2.step()
 
-        print(l.item())
+            print(l.item())
