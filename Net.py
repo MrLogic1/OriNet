@@ -20,8 +20,8 @@ class ImgEncoder(nn.Module):
 class ImgClsNet(nn.Module):
     def __init__(self):
         out_dim = 128
-        dim1 = 64
-        dim2 = 16
+        dim1 = 24
+        dim2 = 8
         p = 0.2
         super().__init__()
         self.fc1 = nn.Linear(out_dim, dim1)
@@ -44,7 +44,7 @@ class ImgClsNet(nn.Module):
 class ImgOriNet(nn.Module):
     def __init__(self):
         out_dim = 128
-        dim = 16
+        dim = 24
         p = 0.2
         super().__init__()
         self.sequential = nn.Sequential(
@@ -89,8 +89,8 @@ class ModelEncoder(nn.Module):
 class ModelClfNet(nn.Module):
     def __init__(self):
         out_dim = 128
-        dim1 = 64
-        dim2 = 16
+        dim1 = 24
+        dim2 = 8
         p = 0.2
         super().__init__()
         self.fc1 = nn.Linear(out_dim, dim1)
@@ -112,7 +112,7 @@ class ModelClfNet(nn.Module):
 class ModelOriNet(nn.Module):
     def __init__(self):
         out_dim = 128
-        dim = 16
+        dim = 24
         p = 0.2
         super().__init__()
         self.sequential = nn.Sequential(
@@ -123,37 +123,6 @@ class ModelOriNet(nn.Module):
     def forward(self, input):
         out = self.sequential(input)
         return out
-class CrossDomNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.img_net = ImgNet()
-        self.model_net = ModelNet()
-    def forward(self, img, render):
-        img = self.img_net(img)
-        render = self.model_net(render)
-
-        render_emb = self.get_embedding(img, render)
-
-        return img, render_emb
-    def get_embedding(self, img, render):
-        #img: bs x dim
-        #render: bs x 12 x dim
-        bs, dim = img.size()
-        img = img.reshape(bs, 1, dim)
-
-        render2 = render.transpose(1,2)
-
-        simil = torch.bmm(img, render2)
-        simil = torch.squeeze(simil)
-
-        weight = torch.softmax(simil, 1)
-        weight = weight.reshape(bs, 1, dim)
-
-        emb = torch.bmm(weight, render)
-
-        return emb
-
-
 class ModelNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -166,10 +135,52 @@ class ModelNet(nn.Module):
         out2, out3 = self.clf_net(out)
 
         return out1, out2, out3
+
+class CrossDomNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.modelnet2 = ModelEncoder()
+        self.img_net = ImgNet()
+        self.model_net = ModelNet()
+    def forward(self, img, render):
+        '''
+        :param img: 输入得查询图像
+        :param render: 输入的模型渲染图
+        :return:
+        '''
+        o11, o12, _ = self.img_net(img)
+        bs = len(render)
+        vn = len(render[0])
+        render = render.reshape(-1, 3, 224, 224)
+        _, o22, _ = self.model_net(render)
+        o22 = o22.reshape(bs, vn, -1)
+        render_emb = self.get_embedding(o11, o22)
+        # render_emb = self.modelnet2(render_emb)
+
+        return img, render_emb
+    def get_embedding(self, img, render):
+        #img: bs x dim
+        #render: bs x 12 x dim
+        bs, dim = img.size()
+        img = img.reshape(bs, 1, dim)
+
+        render2 = render.transpose(1,2)
+
+        simil = torch.bmm(img, render2)
+        # simil = torch.squeeze(simil)
+
+        weight = torch.softmax(simil, 2)
+        weight = weight.reshape(bs, 1, 12)
+
+        emb = torch.bmm(weight, render)
+
+        return emb
+
 if __name__ == '__main__':
 
     net1 = ImgNet().to(device='cuda')
     net2 = ModelNet().to(device='cuda')
+
     x1 = torch.randn(100, 8, 3, 224, 224,requires_grad=True,device='cuda')
     y1 = torch.randn(100, 8, 16,requires_grad=False,device='cuda')
 
@@ -198,3 +209,8 @@ if __name__ == '__main__':
             opt2.step()
 
             print(l.item())
+
+    # net3 = CrossDomNet().to(device='cuda')
+    # x1 = torch.randn(100, 2, 3, 224, 224,requires_grad=True,device='cuda')
+    # y1 = torch.randn(2, 12, 3,224,224,requires_grad=True,device='cuda')
+    # a, b = net3(x1[0],y1)
